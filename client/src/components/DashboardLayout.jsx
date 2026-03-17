@@ -63,14 +63,12 @@ const DashboardLayout = ({ children }) => {
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton asChild>
                         <NavLink
-                            to={item.url}
-                            className={({ isActive }) =>{
-                                return isActive && "bg-sidebar-accent text-sidebar-primary font-medium",
-                                "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                            }
-                            }
+                          to={item.url}
+                          end={item.url === "/farmer" || item.url === "/buyer" || item.url === "/admin"}
+                          className="hover:bg-sidebar-accent"
+                          activeClassName="bg-sidebar-accent text-sidebar-primary font-medium"
                         >
-                          <item.icon className="h-4 w-4" />
+                          <item.icon className="mr-2 h-4 w-4" />
                           <span>{item.title}</span>
                         </NavLink>
                       </SidebarMenuButton>
