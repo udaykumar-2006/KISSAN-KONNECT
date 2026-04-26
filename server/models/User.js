@@ -17,7 +17,9 @@ const userSchema = new mongoose.Schema({
   address: { type: addressSchema, default: () => ({}) },
   phone: { type: String, required: true },
   photo: { type: String, default: '' },
-  joinedAt: { type: Date, default: Date.now }
+  joinedAt: { type: Date, default: Date.now },
+  avgRating: { type: Number, default: 0 },
+  numRatings: { type: Number, default: 0 }
 }, { timestamps: true });
 
 // Hash password before saving

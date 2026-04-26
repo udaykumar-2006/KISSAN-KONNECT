@@ -1,237 +1,164 @@
 const Bargain = require('../models/Bargain');
-const Crop = require('../models/Crop');
+const Order   = require('../models/Order');
+const Crop    = require('../models/Crop');
+const User    = require('../models/User');
 const { createNotification } = require('./notificationController');
 
-// @desc    Create a new bargain (initial offer)
-// @route   POST /api/bargains
-// @access  Private (Buyer only)
-const createBargain = async (req, res) => {
+let _io = null;
+const setIo = (io) => { _io = io; };
+const getIo = () => _io;
+
+const initOrGetChat = async (req, res) => {
   try {
-    const { cropId, pricePerKg, quantityKg, message } = req.body;
-
-    // Basic validation
-    if (!cropId || !pricePerKg || !quantityKg) {
-      return res.status(400).json({ message: 'cropId, pricePerKg, and quantityKg are required' });
-    }
-
-    // Fetch crop to get farmer details and validate
+    const { cropId } = req.body;
+    if (!cropId) return res.status(400).json({ message: 'cropId is required' });
     const crop = await Crop.findById(cropId);
-    if (!crop) {
-      return res.status(404).json({ message: 'Crop not found' });
-    }
-    if (crop.farmerId.toString() === req.user._id.toString()) {
-      return res.status(400).json({ message: 'You cannot bargain on your own crop' });
-    }
-    if (crop.status !== 'active') {
-      return res.status(400).json({ message: 'Crop is not available for bargaining' });
-    }
-    if (quantityKg < crop.minQuantityKg) {
-      return res.status(400).json({ message: `Minimum quantity is ${crop.minQuantityKg} kg` });
-    }
-    if (quantityKg > crop.availableQuantityKg) {
-      return res.status(400).json({ message: `Only ${crop.availableQuantityKg} kg available` });
-    }
+    if (!crop || crop.status !== 'active') return res.status(400).json({ message: 'Crop not available' });
+    if (crop.farmerId.toString() === req.user._id.toString())
+      return res.status(400).json({ message: 'Cannot bargain on your own crop' });
+    if (crop.availableQuantityKg === 0) return res.status(400).json({ message: 'Crop is sold out' });
 
-    // Check if there's already an active bargain for this buyer+crop
-    const existing = await Bargain.findOne({
-      cropId,
-      buyerId: req.user._id,
-      status: 'active'
-    });
-    if (existing) {
-      return res.status(400).json({ message: 'You already have an active bargain on this crop' });
+    // Reuse ACTIVE chat only; closed chats → create new
+    let bargain = await Bargain.findOne({ cropId: crop._id, buyerId: req.user._id, farmerId: crop.farmerId, status: 'active' });
+    if (bargain) {
+      bargain.availableQuantityKg = crop.availableQuantityKg;
+      await bargain.save();
+    } else {
+      bargain = await Bargain.create({
+        cropId: crop._id, cropName: crop.name, cropImage: crop.image,
+        buyerId: req.user._id, buyerName: req.user.name,
+        farmerId: crop.farmerId, farmerName: crop.farmerName,
+        basePrice: crop.pricePerKg, minQuantity: crop.minQuantityKg,
+        availableQuantityKg: crop.availableQuantityKg,
+        status: 'active', lastSenderRole: null, messages: [],
+      });
+      await createNotification({ userId: crop.farmerId, title: 'New Bargain Request 💬', message: `${req.user.name} wants to bargain on ${crop.name}`, type: 'bargain', relatedId: bargain._id });
+      if (_io) _io.to(bargain._id.toString()).emit('bargain_initiated', { bargainId: bargain._id, cropName: crop.name, buyerName: req.user.name });
     }
-
-    // Create the first message
-    const totalPrice = pricePerKg * quantityKg;
-    const newMessage = {
-      sender: 'buyer',
-      type: 'offer',
-      pricePerKg,
-      quantityKg,
-      totalPrice,
-      message: message || '',
-      timestamp: new Date()
-    };
-
-    const bargain = await Bargain.create({
-      cropId: crop._id,
-      cropName: crop.name,
-      cropImage: crop.image,
-      buyerId: req.user._id,
-      buyerName: req.user.name,
-      farmerId: crop.farmerId,
-      farmerName: crop.farmerName,
-      status: 'active',
-      messages: [newMessage]
-    });
-
-    // Create a notification for the farmer
-    await createNotification({
-      userId: crop.farmerId,
-      title: 'New Bargain Offer',
-      message: `${req.user.name} made an offer on ${crop.name}`,
-      type: 'bargain',
-      relatedId: bargain._id
-    });
-
-    res.status(201).json(bargain);
-  } catch (error) {
-    console.error(error);
+    res.status(200).json(bargain);
+  } catch (err) {
+    console.error('initOrGetChat:', err.message);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
-// @desc    Get all bargains for the logged-in user (buyer or farmer)
-// @route   GET /api/bargains
-// @access  Private
 const getUserBargains = async (req, res) => {
   try {
-    let query = {};
-    if (req.user.role === 'buyer') {
-      query.buyerId = req.user._id;
-    } else if (req.user.role === 'farmer') {
-      query.farmerId = req.user._id;
-    } else {
-      // admin could see all, but for now return empty
-      return res.json([]);
-    }
-
-    const bargains = await Bargain.find(query).sort({ updatedAt: -1 });
-    res.json(bargains);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
-  }
+    let query = req.user.role === 'buyer' ? { buyerId: req.user._id } : req.user.role === 'farmer' ? { farmerId: req.user._id } : null;
+    if (!query) return res.json([]);
+    res.json(await Bargain.find(query).sort({ updatedAt: -1 }));
+  } catch (err) { res.status(500).json({ message: 'Server error' }); }
 };
 
-// @desc    Get single bargain by ID
-// @route   GET /api/bargains/:id
-// @access  Private (participants only)
 const getBargainById = async (req, res) => {
   try {
     const bargain = await Bargain.findById(req.params.id);
-    if (!bargain) {
-      return res.status(404).json({ message: 'Bargain not found' });
-    }
-
-    // Check if user is buyer or farmer of this bargain
-    if (bargain.buyerId.toString() !== req.user._id.toString() &&
-        bargain.farmerId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Not authorized to view this bargain' });
-    }
-
+    if (!bargain) return res.status(404).json({ message: 'Bargain not found' });
+    const uid = req.user._id.toString();
+    if (bargain.buyerId.toString() !== uid && bargain.farmerId.toString() !== uid)
+      return res.status(403).json({ message: 'Not authorized' });
     res.json(bargain);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
-  }
+  } catch (err) { res.status(500).json({ message: 'Server error' }); }
 };
 
-// @desc    Add a message to a bargain (offer, counter, accept, reject)
-// @route   POST /api/bargains/:id/messages
-// @access  Private (participants only)
+const processNewMessage = async ({ bargainId, type, pricePerKg, quantityKg, message, userId, userName }) => {
+  const bargain = await Bargain.findById(bargainId);
+  if (!bargain) throw new Error('Bargain not found');
+  const isBuyer  = bargain.buyerId.toString()  === userId.toString();
+  const isFarmer = bargain.farmerId.toString() === userId.toString();
+  if (!isBuyer && !isFarmer) throw new Error('Not authorized');
+  if (bargain.status !== 'active') throw new Error(`Bargain is already ${bargain.status}`);
+
+  const senderRole = isBuyer ? 'buyer' : 'farmer';
+
+  // Role-action rules
+  if (isBuyer  && type === 'reject') throw new Error('Buyers cannot reject. Send a counter-offer instead.');
+  if (isBuyer  && !['offer', 'counter', 'accept'].includes(type)) throw new Error('Buyers can only send offers, counters, or accept');
+  if (isFarmer && !['counter', 'accept', 'reject'].includes(type)) throw new Error('Invalid action for farmer');
+
+  // Turn enforcement
+  const last = bargain.lastSenderRole;
+  if (last === null && !isBuyer)   throw new Error('Buyer must send the first offer');
+  if (last === 'buyer'  && isBuyer)  throw new Error('Waiting for farmer\'s response');
+  if (last === 'farmer' && isFarmer) throw new Error('Waiting for buyer\'s response');
+
+  let msgPrice = Number(pricePerKg) || 0;
+  let msgQty   = Number(quantityKg)  || 0;
+  if (!msgPrice || !msgQty) {
+    const lm = bargain.messages[bargain.messages.length - 1];
+    msgPrice = msgPrice || (lm?.pricePerKg ?? 0);
+    msgQty   = msgQty   || (lm?.quantityKg  ?? 0);
+  }
+
+  if (type !== 'reject') {
+    const crop = await Crop.findById(bargain.cropId).select('availableQuantityKg minQuantityKg status');
+    if (!crop || crop.status !== 'active') throw new Error('Crop no longer available');
+    if (msgQty > crop.availableQuantityKg)  throw new Error(`Only ${crop.availableQuantityKg} kg available`);
+    if (msgQty < crop.minQuantityKg)        throw new Error(`Minimum quantity is ${crop.minQuantityKg} kg`);
+    if (msgPrice <= 0)                      throw new Error('Price must be > 0');
+    bargain.availableQuantityKg = crop.availableQuantityKg;
+  }
+
+  const newMsg = { senderId: userId, senderRole, type, pricePerKg: msgPrice, quantityKg: msgQty, totalPrice: msgPrice * msgQty, message: message || '', timestamp: new Date() };
+  bargain.lastSenderRole = senderRole;
+
+  if (type === 'accept') {
+    bargain.status = 'accepted'; bargain.finalPrice = msgPrice; bargain.finalQuantity = msgQty;
+    bargain.messages.push(newMsg); await bargain.save();
+    const order = await _createOrderFromBargain(bargain);
+    const other = isBuyer ? bargain.farmerId : bargain.buyerId;
+    await createNotification({ userId: other, title: 'Bargain Accepted! 🎉', message: `${userName} accepted the deal for ${bargain.cropName}.`, type: 'bargain', relatedId: bargain._id });
+    await createNotification({ userId, title: isBuyer ? 'Submit Your Address' : 'Deal Accepted 🎉', message: isBuyer ? `Submit your delivery address for ${bargain.cropName}.` : `Waiting for buyer's address.`, type: 'order', relatedId: order?._id });
+    return { bargain, order };
+  }
+
+  if (type === 'reject') {
+    bargain.status = 'rejected'; bargain.messages.push(newMsg); await bargain.save();
+    await createNotification({ userId: bargain.buyerId, title: 'Bargain Rejected', message: `Farmer rejected your offer on ${bargain.cropName}. You may start a new bargain.`, type: 'bargain', relatedId: bargain._id });
+    return { bargain, order: null };
+  }
+
+  bargain.messages.push(newMsg); await bargain.save();
+  const other2 = isBuyer ? bargain.farmerId : bargain.buyerId;
+  await createNotification({ userId: other2, title: 'Bargain Update 💬', message: `${userName} ${type === 'offer' ? 'made an offer' : 'sent a counter'} on ${bargain.cropName}`, type: 'bargain', relatedId: bargain._id });
+  return { bargain, order: null };
+};
+
+const _createOrderFromBargain = async (bargain) => {
+  try {
+    const existing = await Order.findOne({ bargainId: bargain._id });
+    if (existing) return existing;
+    const totalPrice = bargain.finalPrice * bargain.finalQuantity;
+    const advanceAmount = Math.round(totalPrice * 0.15);
+    const order = await Order.create({
+      bargainId: bargain._id, cropId: bargain.cropId, cropName: bargain.cropName, cropImage: bargain.cropImage,
+      buyerId: bargain.buyerId, buyerName: bargain.buyerName, farmerId: bargain.farmerId, farmerName: bargain.farmerName,
+      pricePerKg: bargain.finalPrice, quantityKg: bargain.finalQuantity, totalPrice,
+      advanceAmount, remainingAmount: totalPrice - advanceAmount,
+      advancePaid: false, paymentStatus: 'PENDING', status: 'PENDING_ADDRESS', address: '',
+    });
+    bargain.orderId = order._id; await bargain.save();
+    if (_io) _io.to(bargain._id.toString()).emit('order_created', { orderId: order._id, totalPrice, advanceAmount, remainingAmount: totalPrice - advanceAmount, status: 'PENDING_ADDRESS' });
+    return order;
+  } catch (err) { console.error('_createOrderFromBargain:', err.message); return null; }
+};
+
 const addMessage = async (req, res) => {
   try {
-    const { type, pricePerKg, quantityKg, message } = req.body;
-    const bargainId = req.params.id;
-
-    const bargain = await Bargain.findById(bargainId);
-    if (!bargain) {
-      return res.status(404).json({ message: 'Bargain not found' });
+    const result = await processNewMessage({ bargainId: req.params.id, ...req.body, userId: req.user._id, userName: req.user.name });
+    const { bargain } = result;
+    const latestMsg = bargain.messages[bargain.messages.length - 1];
+    if (_io) {
+      const roomId = bargain._id.toString();
+      _io.to(roomId).emit('receive_message', { bargainId: bargain._id, message: latestMsg, status: bargain.status, lastSenderRole: bargain.lastSenderRole, availableQuantityKg: bargain.availableQuantityKg, orderId: result.order?._id });
+      if (bargain.status === 'accepted') _io.to(roomId).emit('bargain_accepted', { bargainId: bargain._id, finalPrice: bargain.finalPrice, finalQuantity: bargain.finalQuantity, orderId: result.order?._id, advanceAmount: result.order?.advanceAmount, totalPrice: result.order?.totalPrice });
+      if (bargain.status === 'rejected') _io.to(roomId).emit('bargain_rejected', { bargainId: bargain._id });
     }
-
-    // Check if user is a participant
-    const isBuyer = bargain.buyerId.toString() === req.user._id.toString();
-    const isFarmer = bargain.farmerId.toString() === req.user._id.toString();
-    if (!isBuyer && !isFarmer) {
-      return res.status(403).json({ message: 'Not authorized' });
-    }
-
-    // Validate bargain status
-    if (bargain.status !== 'active') {
-      return res.status(400).json({ message: `Bargain is already ${bargain.status}` });
-    }
-
-    // Validate sender role based on user
-    const sender = isBuyer ? 'buyer' : 'farmer';
-
-    // Validate message type based on sender
-    if (type === 'offer' && sender !== 'buyer') {
-      return res.status(400).json({ message: 'Only buyer can send an initial offer' });
-    }
-    if (type === 'counter' && !pricePerKg && !quantityKg) {
-      return res.status(400).json({ message: 'Counter offer requires pricePerKg and/or quantityKg' });
-    }
-    if ((type === 'accept' || type === 'reject') && (pricePerKg || quantityKg)) {
-      // Accept/reject messages shouldn't contain price/quantity changes
-    }
-
-    // Determine the price and quantity to store in the message
-    let msgPrice = pricePerKg;
-    let msgQty = quantityKg;
-    let total = 0;
-
-    // If not provided in the request, use the latest values from the last message
-    if (!msgPrice || !msgQty) {
-      const lastMsg = bargain.messages[bargain.messages.length - 1];
-      msgPrice = msgPrice || lastMsg.pricePerKg;
-      msgQty = msgQty || lastMsg.quantityKg;
-    }
-    total = msgPrice * msgQty;
-
-    // Create new message
-    const newMessage = {
-      sender,
-      type,
-      pricePerKg: msgPrice,
-      quantityKg: msgQty,
-      totalPrice: total,
-      message: message || '',
-      timestamp: new Date()
-    };
-
-    // Special handling for accept/reject
-    if (type === 'accept') {
-      const crop = await Crop.findById(bargain.cropId);
-      if (!crop) return res.status(404).json({ message: 'Crop not found' });
-      if (crop.availableQuantityKg < msgQty) {
-        return res.status(400).json({ message: `Only ${crop.availableQuantityKg} kg available` });
-      }
-      bargain.status = 'accepted';
-      bargain.finalPrice = msgPrice;
-      bargain.finalQuantity = msgQty;
-      await createOrderFromBargain(bargain); // order created, no quantity reduction
-    } else if (type === 'reject') {
-      bargain.status = 'rejected';
-    }
-
-    bargain.messages.push(newMessage);
-    await bargain.save();
-
-    // Send notification to the other party
-    const otherUserId = isBuyer ? bargain.farmerId : bargain.buyerId;
-    const action = type === 'offer' ? 'made an offer' :
-                  type === 'counter' ? 'sent a counteroffer' :
-                  type === 'accept' ? 'accepted the bargain' : 'rejected the bargain';
-    await createNotification({
-      userId: otherUserId,
-      title: `Bargain ${type}`,
-      message: `${req.user.name} ${action} on ${bargain.cropName}`,
-      type: 'bargain',
-      relatedId: bargain._id
-    });
-
-    res.json(bargain);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    res.json({ bargain, order: result.order });
+  } catch (err) {
+    const code = err.message.includes('not found') ? 404 : err.message.includes('authorized') ? 403 : 400;
+    res.status(code).json({ message: err.message });
   }
 };
 
-module.exports = {
-  createBargain,
-  getUserBargains,
-  getBargainById,
-  addMessage
-};
+module.exports = { setIo, getIo, initOrGetChat, getUserBargains, getBargainById, addMessage, processNewMessage, _createOrderFromBargain };

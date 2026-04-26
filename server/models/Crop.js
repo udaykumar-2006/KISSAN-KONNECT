@@ -20,7 +20,9 @@ const cropSchema = new mongoose.Schema({
   location: { type: String, required: true },
   image: { type: String, required: true }, // Cloudinary URL
   harvestDate: { type: Date, required: true },
-  status: { type: String, enum: ['active', 'inactive'], default: 'active' } // for pause/unpause
+  status: { type: String, enum: ['active', 'inactive'], default: 'active' }, // for pause/unpause
+  avgRating: { type: Number, default: 0 },
+  numRatings: { type: Number, default: 0 }
 }, { timestamps: true }); // adds createdAt and updatedAt
 
 module.exports = mongoose.model('Crop', cropSchema);

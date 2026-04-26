@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Bell, Check, CheckCheck, Package, MessageSquare, Star, Info } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
 import { useNotifications } from "@/stores/NotificationStore";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
@@ -21,16 +20,15 @@ const typeColors = {
 };
 
 const NotificationBell = () => {
-  const { userId } = useAuth();
-  const { getUserNotifications, getUnreadCount, markRead, markAllRead } = useNotifications();
+  const { notifications, unreadCount, markRead, markAllRead } = useNotifications();
   const [open, setOpen] = useState(false);
 
-  const notifications = getUserNotifications(userId);
-  const unread = getUnreadCount(userId);
-  const now= Date.now();
+  const now = Date.now();
 
   const formatTime = (iso) => {
+    if (!iso) return "Just now";
     const diff = now - new Date(iso).getTime();
+    if (diff < 0) return "Just now";
     const mins = Math.floor(diff / 60000);
     if (mins < 60) return `${mins}m ago`;
     const hrs = Math.floor(mins / 60);
@@ -43,9 +41,9 @@ const NotificationBell = () => {
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" className="relative">
           <Bell className="h-5 w-5 text-foreground" />
-          {unread > 0 && (
+          {unreadCount > 0 && (
             <span className="absolute -top-0.5 -right-0.5 h-4.5 min-w-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
-              {unread > 9 ? "9+" : unread}
+              {unreadCount > 9 ? "9+" : unreadCount}
             </span>
           )}
         </Button>
@@ -53,8 +51,8 @@ const NotificationBell = () => {
       <PopoverContent align="end" className="w-80 p-0">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h3 className="font-display font-semibold text-sm text-foreground">Notifications</h3>
-          {unread > 0 && (
-            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground h-7" onClick={() => markAllRead(userId)}>
+          {unreadCount > 0 && (
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground h-7" onClick={() => markAllRead()}>
               <CheckCheck className="w-3 h-3 mr-1" /> Mark all read
             </Button>
           )}
@@ -64,14 +62,15 @@ const NotificationBell = () => {
             <p className="text-sm text-muted-foreground text-center py-8">No notifications yet</p>
           ) : (
             notifications.map(n => {
-              const Icon = typeIcons[n.type];
+              const Icon = typeIcons[n.type] || Info;
+              const colorClass = typeColors[n.type] || typeColors.system;
               return (
                 <div
-                  key={n.id}
-                  onClick={() => !n.read && markRead(n.id)}
+                  key={n._id || n.id}
+                  onClick={() => !n.read && markRead(n._id || n.id)}
                   className={`flex gap-3 px-4 py-3 border-b border-border/50 cursor-pointer hover:bg-muted/50 transition-colors ${!n.read ? "bg-primary/5" : ""}`}
                 >
-                  <div className={`mt-0.5 shrink-0 ${typeColors[n.type]}`}>
+                  <div className={`mt-0.5 shrink-0 ${colorClass}`}>
                     <Icon className="w-4 h-4" />
                   </div>
                   <div className="flex-1 min-w-0">

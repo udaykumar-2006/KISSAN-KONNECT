@@ -1,42 +1,57 @@
-import React, { createContext, useContext, useState, useCallback } from "react";
-import {seedNotifications} from "../data/NotificationData";
+import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import * as api from "@/services/api";
 
 const NotificationContext = createContext(undefined);
 
-let counter = 0;
-
-
 export const NotificationProvider = ({ children }) => {
-  const [notifications, setNotifications] = useState(seedNotifications);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
-  const addNotification = useCallback((n) => {
-    const newNotif = {
-      ...n,
-      id: `n${++counter + 100}`,
-      read: false,
-      createdAt: new Date().toISOString(),
-    };
-    setNotifications(prev => [newNotif, ...prev]);
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('kk_token');
+      if (!token) return; // Only fetch if logged in
+      const { data } = await api.getNotifications();
+      setNotifications(data);
+      setUnreadCount(data.filter(n => !n.read).length);
+    } catch (err) {
+      // Silently fail if not authenticated or error
+    }
   }, []);
 
-  const markRead = useCallback((id) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-  }, []);
+  // Initial fetch and poll every 15 seconds
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 15000);
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
 
-  const markAllRead = useCallback((userId) => {
-    setNotifications(prev => prev.map(n => n.userId === userId ? { ...n, read: true } : n));
-  }, []);
+  const markRead = useCallback(async (id) => {
+    try {
+      // Optimistic update
+      setNotifications(prev => prev.map(n => n._id === id ? { ...n, read: true } : n));
+      setUnreadCount(prev => Math.max(0, prev - 1));
+      await api.markNotificationRead(id);
+    } catch (err) {
+      console.error('Failed to mark read', err);
+      fetchNotifications(); // revert on fail
+    }
+  }, [fetchNotifications]);
 
-  const getUnreadCount = useCallback((userId) => {
-    return notifications.filter(n => n.userId === userId && !n.read).length;
-  }, [notifications]);
-
-  const getUserNotifications = useCallback((userId) => {
-    return notifications.filter(n => n.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [notifications]);
+  const markAllRead = useCallback(async () => {
+    try {
+      // Optimistic update
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+      setUnreadCount(0);
+      await api.markAllRead();
+    } catch (err) {
+      console.error('Failed to mark all read', err);
+      fetchNotifications(); // revert on fail
+    }
+  }, [fetchNotifications]);
 
   return (
-    <NotificationContext.Provider value={{ notifications, addNotification, markRead, markAllRead, getUnreadCount, getUserNotifications }}>
+    <NotificationContext.Provider value={{ notifications, unreadCount, markRead, markAllRead, refresh: fetchNotifications }}>
       {children}
     </NotificationContext.Provider>
   );

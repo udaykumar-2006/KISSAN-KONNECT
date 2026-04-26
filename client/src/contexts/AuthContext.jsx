@@ -115,6 +115,8 @@ export const AuthProvider = ({ children }) => {
 		userAddress: currentUser?.address,
 		userPhone: currentUser?.phone,
 		userPhoto: currentUser?.photo,
+		avgRating: currentUser?.avgRating || 0,
+		numRatings: currentUser?.numRatings || 0,
 	};
 
 	return (

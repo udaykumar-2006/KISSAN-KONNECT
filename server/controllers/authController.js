@@ -126,7 +126,9 @@ const updateProfile = async (req, res) => {
       role: updatedUser.role,
       phone: updatedUser.phone,
       address: updatedUser.address,
-      photo: updatedUser.photo
+      photo: updatedUser.photo,
+      avgRating: updatedUser.avgRating,
+      numRatings: updatedUser.numRatings
     });
   } catch (error) {
     console.error(error);

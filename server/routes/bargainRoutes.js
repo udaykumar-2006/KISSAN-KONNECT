@@ -1,27 +1,26 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const {
-  createBargain,
+  initOrGetChat,
   getUserBargains,
   getBargainById,
-  addMessage
+  addMessage,
 } = require('../controllers/bargainController');
 
 const router = express.Router();
 
-// All bargain routes require authentication
 router.use(protect);
 
-// GET /api/bargains - get all bargains for the logged-in user
+// GET  /api/bargains          — list all bargains for logged-in user
 router.get('/', getUserBargains);
 
-// POST /api/bargains - create a new bargain (buyer only)
-router.post('/', authorize('buyer'), createBargain);
+// POST /api/bargains/init     — buyer initiates or resumes a chat (no duplicate)
+router.post('/init', authorize('buyer'), initOrGetChat);
 
-// GET /api/bargains/:id - get a specific bargain
+// GET  /api/bargains/:id      — get a specific bargain with messages
 router.get('/:id', getBargainById);
 
-// POST /api/bargains/:id/messages - add a message to a bargain
+// POST /api/bargains/:id/messages  — add message via HTTP (socket is primary)
 router.post('/:id/messages', addMessage);
 
 module.exports = router;

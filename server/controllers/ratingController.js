@@ -1,9 +1,31 @@
 const CropRating = require('../models/CropRating');
 const BuyerRating = require('../models/BuyerRating');
+const FarmerRating = require('../models/FarmerRating');
 const Order = require('../models/Order');
 const Crop = require('../models/Crop');
 const User = require('../models/User');
 const { createNotification } = require('./notificationController');
+
+/**
+ * Helper to update aggregate ratings on a model (User or Crop)
+ * @param {mongoose.Model} model - User or Crop model
+ * @param {string} id - ID of the document to update
+ * @param {number} newRating - The new rating value (1-5)
+ */
+const updateAggregateRating = async (model, id, newRating) => {
+  const doc = await model.findById(id);
+  if (!doc) return;
+
+  const currentNum = doc.numRatings || 0;
+  const currentAvg = doc.avgRating || 0;
+
+  const newNum = currentNum + 1;
+  const newAvg = ((currentAvg * currentNum) + newRating) / newNum;
+
+  doc.numRatings = newNum;
+  doc.avgRating = Math.round(newAvg * 10) / 10; // 1 decimal place
+  await doc.save();
+};
 
 // @desc    Rate a crop (by buyer after order completed)
 // @route   POST /api/ratings/crop
@@ -16,23 +38,20 @@ const rateCrop = async (req, res) => {
       return res.status(400).json({ message: 'Valid orderId and rating (1-5) required' });
     }
 
-    // Fetch order and validate
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
     if (order.buyerId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Not authorized to rate this order' });
     }
-    if (order.status !== 'delivered' && order.status !== 'completed') {
+    if (order.status !== 'DELIVERED' && order.status !== 'COMPLETED') {
       return res.status(400).json({ message: 'Order must be delivered or completed to rate' });
     }
 
-    // Check if already rated this crop in this order
     const existing = await CropRating.findOne({ orderId, cropId: order.cropId });
     if (existing) {
       return res.status(400).json({ message: 'You have already rated this crop for this order' });
     }
 
-    // Create rating
     const ratingDoc = await CropRating.create({
       cropId: order.cropId,
       buyerId: req.user._id,
@@ -41,8 +60,14 @@ const rateCrop = async (req, res) => {
       rating,
       review: review || ''
     });
+    
+    // Mark order as rated by buyer
+    order.isRatedByBuyer = true;
+    await order.save();
 
-    // Notify farmer about new rating
+    // Update aggregate rating for the crop
+    await updateAggregateRating(Crop, order.cropId, rating);
+
     await createNotification({
         userId: order.farmerId,
         title: 'New Crop Rating',
@@ -50,8 +75,62 @@ const rateCrop = async (req, res) => {
         type: 'rating',
         relatedId: ratingDoc._id
     });
-    // Optionally update crop's average rating (we'll compute on the fly or store denormalized)
-    // For now, just return the rating
+
+    res.status(201).json(ratingDoc);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// @desc    Rate a farmer (by buyer after order completed)
+// @route   POST /api/ratings/farmer
+// @access  Private (buyer only)
+const rateFarmer = async (req, res) => {
+  try {
+    const { orderId, rating, review } = req.body;
+
+    if (!orderId || !rating || rating < 1 || rating > 5) {
+      return res.status(400).json({ message: 'Valid orderId and rating (1-5) required' });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (order.buyerId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Not authorized to rate this farmer' });
+    }
+    if (order.status !== 'DELIVERED' && order.status !== 'COMPLETED') {
+      return res.status(400).json({ message: 'Order must be delivered or completed to rate' });
+    }
+
+    const existing = await FarmerRating.findOne({ orderId });
+    if (existing) {
+      return res.status(400).json({ message: 'You have already rated this farmer for this order' });
+    }
+
+    const ratingDoc = await FarmerRating.create({
+      farmerId: order.farmerId,
+      buyerId: req.user._id,
+      buyerName: req.user.name,
+      orderId: order._id,
+      rating,
+      review: review || ''
+    });
+    
+    // Mark order as rated by buyer
+    order.isRatedByBuyer = true;
+    await order.save();
+
+    // Update aggregate rating for the farmer (User model)
+    await updateAggregateRating(User, order.farmerId, rating);
+
+    await createNotification({
+        userId: order.farmerId,
+        title: 'New Farmer Rating',
+        message: `${req.user.name} rated you ${rating} stars`,
+        type: 'rating',
+        relatedId: ratingDoc._id
+    });
 
     res.status(201).json(ratingDoc);
   } catch (error) {
@@ -76,7 +155,7 @@ const rateBuyer = async (req, res) => {
     if (order.farmerId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Not authorized to rate this buyer' });
     }
-    if (order.status !== 'delivered' && order.status !== 'completed') {
+    if (order.status !== 'DELIVERED' && order.status !== 'COMPLETED') {
       return res.status(400).json({ message: 'Order must be delivered or completed to rate' });
     }
 
@@ -93,8 +172,14 @@ const rateBuyer = async (req, res) => {
       rating,
       review: review || ''
     });
+    
+    // Mark order as rated by farmer
+    order.isRatedByFarmer = true;
+    await order.save();
 
-    // Notify buyer about new rating
+    // Update aggregate rating for the buyer (User model)
+    await updateAggregateRating(User, order.buyerId, rating);
+
     await createNotification({
         userId: order.buyerId,
         title: 'New Buyer Rating',
@@ -127,6 +212,24 @@ const getCropRatings = async (req, res) => {
   }
 };
 
+// @desc    Get ratings for a specific farmer (public)
+// @route   GET /api/ratings/farmer/:farmerId
+// @access  Public
+const getFarmerRatings = async (req, res) => {
+    try {
+      const ratings = await FarmerRating.find({ farmerId: req.params.farmerId }).sort({ createdAt: -1 });
+      const average = ratings.reduce((acc, r) => acc + r.rating, 0) / ratings.length || 0;
+      res.json({
+        ratings,
+        average: Math.round(average * 10) / 10,
+        count: ratings.length
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Server error' });
+    }
+  };
+
 // @desc    Get ratings for a specific buyer (public)
 // @route   GET /api/ratings/buyer/:buyerId
 // @access  Public
@@ -150,13 +253,14 @@ const getBuyerRatings = async (req, res) => {
 // @access  Private
 const getMyRatings = async (req, res) => {
   try {
-    let cropRatings = [], buyerRatings = [];
+    let cropRatings = [], buyerRatings = [], farmerRatings = [];
     if (req.user.role === 'buyer') {
       cropRatings = await CropRating.find({ buyerId: req.user._id }).sort({ createdAt: -1 });
+      farmerRatings = await FarmerRating.find({ buyerId: req.user._id }).sort({ createdAt: -1 });
     } else if (req.user.role === 'farmer') {
       buyerRatings = await BuyerRating.find({ farmerId: req.user._id }).sort({ createdAt: -1 });
     }
-    res.json({ cropRatings, buyerRatings });
+    res.json({ cropRatings, buyerRatings, farmerRatings });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
@@ -165,8 +269,10 @@ const getMyRatings = async (req, res) => {
 
 module.exports = {
   rateCrop,
+  rateFarmer,
   rateBuyer,
   getCropRatings,
+  getFarmerRatings,
   getBuyerRatings,
   getMyRatings
 };

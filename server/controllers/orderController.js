@@ -1,251 +1,256 @@
-const Order = require('../models/Order');
-const Crop = require('../models/Crop');
+const Order   = require('../models/Order');
+const mongoose = require('mongoose');
+const Crop    = require('../models/Crop');
 const Bargain = require('../models/Bargain');
+const User    = require('../models/User');
 const { createNotification } = require('./notificationController');
 
-// Helper to calculate advance (15% of total)
-const calculateAdvance = (total) => Math.round(total * 0.15);
+// ── Share io with this controller (set from socket.js on startup) ──
+let _io = null;
+const setIo = (io) => { _io = io; };
+const getIo = () => _io;
 
-// @desc    Create order from an accepted bargain
-// @route   POST /api/orders/from-bargain/:bargainId
-// @access  Private (Farmer or Buyer? Actually called internally when bargain accepted)
-// We'll make it internal (no route) but for flexibility, expose as POST with validation.
-const createOrderFromBargain = async (bargain) => {
-  try {
-    const buyer = await User.findById(bargain.buyerId);
-    if (!buyer) throw new Error('Buyer not found');
-    const address = `${buyer.address.street}, ${buyer.address.landmark}, ${buyer.address.city}, ${buyer.address.state} ${buyer.address.pincode}`;
-
-    const totalPrice = bargain.finalPrice * bargain.finalQuantity;
-
-    // Check if order already exists
-    const existingOrder = await Order.findOne({ bargainId: bargain._id });
-    if (existingOrder) return;
-
-    const order = await Order.create({
-      bargainId: bargain._id,
-      cropId: bargain.cropId,
-      cropName: bargain.cropName,
-      cropImage: bargain.cropImage,
-      buyerId: bargain.buyerId,
-      buyerName: bargain.buyerName,
-      farmerId: bargain.farmerId,
-      farmerName: bargain.farmerName,
-      pricePerKg: bargain.finalPrice,
-      quantityKg: bargain.finalQuantity,
-      totalPrice,
-      advancePaid: 0,
-      remainingAmount: totalPrice,
-      status: 'pending_payment',
-      address
-    });
-
-    // Notify buyer about order creation
-    await createNotification({
-        userId: bargain.buyerId,
-        title: 'Order Created',
-        message: `Your order for ${bargain.cropName} has been created. Please pay advance.`,
-        type: 'order',
-        relatedId: order._id
-    });
-
-    console.log(`Order created: ${order._id}`);
-  } catch (error) {
-    console.error('Failed to create order from bargain:', error);
-  }
+// Helper: emit order_updated to the bargain room (farmerId_buyerId_cropId)
+const _emitOrderUpdate = (order) => {
+  if (!_io) return;
+  const roomId = order.bargainId.toString();
+  _io.to(roomId).emit('order_updated', {
+    orderId: order._id,
+    status: order.status,
+    address: order.address,
+    advancePaid: order.advancePaid,
+    paymentStatus: order.paymentStatus,
+    remainingAmount: order.remainingAmount,
+    totalPrice: order.totalPrice
+  });
 };
 
-// @desc    Get all orders for the logged-in user
-// @route   GET /api/orders
-// @access  Private
+// Linear status order — farmer cannot skip steps
+const STATUS_ORDER = [
+  'PENDING_ADDRESS', 'AWAITING_ADVANCE_PAYMENT', 'CONFIRMED',
+  'FARMER_CONFIRMED', 'READY_FOR_PICKUP', 'OUT_FOR_DELIVERY', 'DELIVERED', 'COMPLETED',
+];
+
 const getUserOrders = async (req, res) => {
   try {
-    let query = {};
-    if (req.user.role === 'buyer') {
-      query.buyerId = req.user._id;
-    } else if (req.user.role === 'farmer') {
-      query.farmerId = req.user._id;
-    } else {
-      // admin could see all
-      return res.json([]);
-    }
-    const orders = await Order.find(query).sort({ createdAt: -1 });
-    res.json(orders);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
-  }
+    let q = {};
+    if      (req.user.role === 'buyer')  q.buyerId  = req.user._id;
+    else if (req.user.role === 'farmer') q.farmerId = req.user._id;
+    else return res.json([]);
+    res.json(await Order.find(q).sort({ createdAt: -1 }));
+  } catch (err) { res.status(500).json({ message: 'Server error' }); }
 };
 
-// @desc    Get single order by ID
-// @route   GET /api/orders/:id
-// @access  Private (participants only)
 const getOrderById = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
-    }
-    // Check if user is buyer or farmer of this order
-    if (order.buyerId.toString() !== req.user._id.toString() &&
-        order.farmerId.toString() !== req.user._id.toString()) {
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    const uid = req.user._id.toString();
+    if (order.buyerId.toString() !== uid && order.farmerId.toString() !== uid)
       return res.status(403).json({ message: 'Not authorized' });
-    }
     res.json(order);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
-  }
+  } catch (err) { res.status(500).json({ message: 'Server error' }); }
 };
 
-// @desc    Update order status (farmer only)
-// @route   PATCH /api/orders/:id/status
-// @access  Private (Farmer owner only)
-const updateOrderStatus = async (req, res) => {
+const getOrderByBargainId = async (req, res) => {
   try {
-    const { status } = req.body;
-    if (!status) {
-      return res.status(400).json({ message: 'Status is required' });
-    }
-
-    const order = await Order.findById(req.params.id);
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
-    }
-    if (order.farmerId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Only the farmer can update status' });
-    }
-
-    // Optional: validate status transition (e.g., cannot go back)
-    order.status = status;
-    if (status === 'delivered') {
-      order.deliveredAt = new Date();
-    }
-    await order.save();
-
-    // Notify buyer
-    await createNotification({
-        userId: order.buyerId,
-        title: 'Order Status Updated',
-        message: `Your order #${order._id} is now ${status}`,
-        type: 'order',
-        relatedId: order._id
-    });
-
+    const order = await Order.findOne({ bargainId: req.params.bargainId });
+    if (!order) return res.status(404).json({ message: 'No order for this bargain' });
+    const uid = req.user._id.toString();
+    if (order.buyerId.toString() !== uid && order.farmerId.toString() !== uid)
+      return res.status(403).json({ message: 'Not authorized' });
     res.json(order);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
-  }
+  } catch (err) { res.status(500).json({ message: 'Server error' }); }
 };
 
-// @desc    Record payment (advance or full)
-// @route   PATCH /api/orders/:id/payment
-// @access  Private (Buyer only)
-const recordPayment = async (req, res) => {
+// ─────────────────────────────────────────────────────────
+// @desc  Buyer submits delivery address
+//        PENDING_ADDRESS → AWAITING_ADVANCE_PAYMENT
+// @route PATCH /api/orders/:id/address
+// @access Private (Buyer only)
+// ─────────────────────────────────────────────────────────
+const submitAddress = async (req, res) => {
   try {
-    const { amount, type } = req.body; // 'advance', 'full', 'remaining'
-    if (!amount || amount <= 0 || !type) {
-      return res.status(400).json({ message: 'Valid amount and type required' });
-    }
+    const { street, landmark, city, state, pincode } = req.body;
+    if (!street || !city || !state || !pincode)
+      return res.status(400).json({ message: 'Street, city, state and pincode are required' });
+    if (!/^\d{6}$/.test(pincode))
+      return res.status(400).json({ message: 'Pincode must be 6 digits' });
 
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
-    if (order.buyerId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Only buyer can record payment' });
-    }
+    if (order.buyerId.toString() !== req.user._id.toString())
+      return res.status(403).json({ message: 'Only the buyer can submit the address' });
+    if (order.status !== 'PENDING_ADDRESS')
+      return res.status(400).json({ message: `Address already submitted (status: ${order.status})` });
 
-    const total = order.totalPrice;
-    const expectedAdvance = Math.round(total * 0.15);
-
-    if (type === 'advance') {
-      if (order.status !== 'pending_payment') {
-        return res.status(400).json({ message: 'Order not awaiting advance' });
-      }
-      if (order.advancePaid > 0) {
-        return res.status(400).json({ message: 'Advance already paid' });
-      }
-      if (amount < expectedAdvance) {
-        return res.status(400).json({ message: `Advance must be at least ${expectedAdvance}` });
-      }
-
-      // Update order
-      order.advancePaid = amount;
-      order.remainingAmount = total - amount;
-      order.status = 'confirmed';
-
-      // Reduce crop quantity
-      const crop = await Crop.findById(order.cropId);
-      if (!crop) return res.status(404).json({ message: 'Crop not found' });
-      if (crop.availableQuantityKg < order.quantityKg) {
-        return res.status(400).json({ message: 'Insufficient crop quantity' });
-      }
-      crop.availableQuantityKg -= order.quantityKg;
-      if (crop.availableQuantityKg === 0) crop.status = 'inactive';
-      await crop.save();
-
-    } else if (type === 'full') {
-      // Pay entire amount at once (optional)
-      if (order.status !== 'pending_payment') {
-        return res.status(400).json({ message: 'Order not awaiting payment' });
-      }
-      if (amount < total) {
-        return res.status(400).json({ message: `Full payment must be at least ${total}` });
-      }
-      order.advancePaid = total;
-      order.remainingAmount = 0;
-      order.status = 'confirmed';
-
-      const crop = await Crop.findById(order.cropId);
-      if (!crop) return res.status(404).json({ message: 'Crop not found' });
-      if (crop.availableQuantityKg < order.quantityKg) {
-        return res.status(400).json({ message: 'Insufficient crop quantity' });
-      }
-      crop.availableQuantityKg -= order.quantityKg;
-      if (crop.availableQuantityKg === 0) crop.status = 'inactive';
-      await crop.save();
-
-    } else if (type === 'remaining') {
-      // Pay remaining 85% after delivery
-      if (order.status !== 'delivered') {
-        return res.status(400).json({ message: 'Remaining payment only after delivery' });
-      }
-      if (order.advancePaid === 0) {
-        return res.status(400).json({ message: 'Advance not paid yet' });
-      }
-      const remaining = total - order.advancePaid;
-      if (amount < remaining) {
-        return res.status(400).json({ message: `Remaining amount is ${remaining}` });
-      }
-      order.advancePaid = total; // or track full payment separately
-      order.remainingAmount = 0;
-      order.status = 'completed';
-    } else {
-      return res.status(400).json({ message: 'Invalid payment type' });
-    }
-
+    const fullAddress = [street, landmark, city, state, pincode].filter(Boolean).join(', ');
+    order.address = fullAddress;
+    order.status  = 'AWAITING_ADVANCE_PAYMENT';
     await order.save();
 
-    // Notify buyer
-    const paymentTypeMsg = type === 'advance' ? 'Advance payment' : 'Full payment';
+    // Real-time update to both parties
+    _emitOrderUpdate(order);
+
     await createNotification({
-        userId: order.farmerId,
-        title: 'Payment Received',
-        message: `${paymentTypeMsg} received for order #${order._id}`,
-        type: 'order',
-        relatedId: order._id
+      userId:    order.farmerId,
+      title:     'Buyer Submitted Address 📍',
+      message:   `${order.buyerName} submitted delivery address for ${order.cropName}. Waiting for advance payment.`,
+      type:      'order',
+      relatedId: order._id,
     });
+
     res.json(order);
-  } catch (error) {
-    console.error(error);
+  } catch (err) {
+    console.error('submitAddress:', err.message);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
-module.exports = {
-  createOrderFromBargain,
-  getUserOrders,
-  getOrderById,
-  updateOrderStatus,
-  recordPayment
+// ─────────────────────────────────────────────────────────
+// @desc  Manually create order from accepted bargain (fallback)
+// @route POST /api/orders/from-bargain/:bargainId
+// @access Private
+// ─────────────────────────────────────────────────────────
+const createOrderFromBargainRoute = async (req, res) => {
+  try {
+    const bargain = await Bargain.findById(req.params.bargainId);
+    if (!bargain) return res.status(404).json({ message: 'Bargain not found' });
+    const uid = req.user._id.toString();
+    if (bargain.buyerId.toString() !== uid && bargain.farmerId.toString() !== uid)
+      return res.status(403).json({ message: 'Not authorized' });
+    if (bargain.status !== 'accepted')
+      return res.status(400).json({ message: 'Bargain must be accepted first' });
+
+    const existing = await Order.findOne({ bargainId: bargain._id });
+    if (existing) return res.json(existing);
+
+    const totalPrice    = bargain.finalPrice * bargain.finalQuantity;
+    const advanceAmount = Math.round(totalPrice * 0.15);
+    const order = await Order.create({
+      bargainId: bargain._id, cropId: bargain.cropId, cropName: bargain.cropName, cropImage: bargain.cropImage,
+      buyerId: bargain.buyerId, buyerName: bargain.buyerName, farmerId: bargain.farmerId, farmerName: bargain.farmerName,
+      pricePerKg: bargain.finalPrice, quantityKg: bargain.finalQuantity, totalPrice,
+      advanceAmount, remainingAmount: totalPrice - advanceAmount,
+      advancePaid: false, paymentStatus: 'PENDING', status: 'PENDING_ADDRESS', address: '',
+    });
+    bargain.orderId = order._id; await bargain.save();
+    res.status(201).json(order);
+  } catch (err) {
+    console.error('createOrderFromBargainRoute:', err.message);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
+
+// ─────────────────────────────────────────────────────────
+// @desc  Record payment (advance 15% or remaining 85%)
+// @route PATCH /api/orders/:id/payment
+// @access Private (Buyer only)
+// ─────────────────────────────────────────────────────────
+const recordPayment = async (req, res) => {
+  try {
+    const { type } = req.body; // 'advance' | 'remaining'
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (order.buyerId.toString() !== req.user._id.toString())
+      return res.status(403).json({ message: 'Only the buyer can make payments' });
+
+    if (type === 'advance') {
+      if (order.status !== 'AWAITING_ADVANCE_PAYMENT')
+        return res.status(400).json({ message: order.status === 'PENDING_ADDRESS' ? 'Please submit your delivery address first' : 'Order is not awaiting advance payment' });
+      if (order.advancePaid)
+        return res.status(400).json({ message: 'Advance already paid' });
+
+      // Atomic stock deduction using $inc
+      const updatedCrop = await Crop.findOneAndUpdate(
+        { _id: order.cropId, availableQuantityKg: { $gte: order.quantityKg }, status: 'active' },
+        { $inc: { availableQuantityKg: -order.quantityKg } },
+        { new: true }
+      );
+
+      // If stock reached 0, mark as inactive
+      if (updatedCrop && updatedCrop.availableQuantityKg <= 0) {
+        updatedCrop.status = 'inactive';
+        await updatedCrop.save();
+      }
+      if (!updatedCrop) {
+        const cur = await Crop.findById(order.cropId).select('availableQuantityKg');
+        return res.status(400).json({ message: `Insufficient stock. Only ${cur?.availableQuantityKg ?? 0} kg available.` });
+      }
+
+      order.advancePaid = true; order.paymentStatus = 'ADVANCE_PAID'; order.status = 'CONFIRMED';
+      await order.save();
+
+      // Real-time update to both parties
+      _emitOrderUpdate(order);
+
+      await createNotification({ userId: order.farmerId, title: 'Advance Received 💰', message: `${order.buyerName} paid ₹${order.advanceAmount.toLocaleString()} advance for ${order.cropName}.`, type: 'order', relatedId: order._id });
+      return res.json(order);
+    }
+
+    if (type === 'remaining') {
+      if (order.status !== 'OUT_FOR_DELIVERY')
+        return res.status(400).json({ message: 'Remaining payment is only available when order is Out for Delivery' });
+      if (!order.advancePaid)
+        return res.status(400).json({ message: 'Advance not paid yet' });
+
+      order.remainingAmount = 0; order.paymentStatus = 'FULLY_PAID'; order.status = 'DELIVERED';
+      order.deliveredAt = new Date();
+      await order.save();
+
+      // Real-time update to both parties
+      _emitOrderUpdate(order);
+
+      await createNotification({ userId: order.farmerId, title: 'Final Payment Received ✅', message: `${order.buyerName} paid remaining amount for ${order.cropName}.`, type: 'order', relatedId: order._id });
+      return res.json(order);
+    }
+
+    return res.status(400).json({ message: 'Invalid payment type. Use "advance" or "remaining".' });
+  } catch (err) {
+    console.error('recordPayment:', err.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────
+// @desc  Farmer updates order status (linear progression only)
+// @route PATCH /api/orders/:id/status
+// @access Private (Farmer only)
+// ─────────────────────────────────────────────────────────
+const updateOrderStatus = async (req, res) => {
+  try {
+    const { status } = req.body;
+    const farmerStatuses = ['FARMER_CONFIRMED', 'READY_FOR_PICKUP', 'OUT_FOR_DELIVERY', 'COMPLETED'];
+    if (!status || !farmerStatuses.includes(status))
+      return res.status(400).json({ message: `Farmer can set: ${farmerStatuses.join(', ')}` });
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (order.farmerId.toString() !== req.user._id.toString())
+      return res.status(403).json({ message: 'Only the farmer can update order status' });
+    if (order.status === 'PENDING_ADDRESS')
+      return res.status(400).json({ message: 'Buyer must submit address first' });
+    if (order.status === 'AWAITING_ADVANCE_PAYMENT')
+      return res.status(400).json({ message: 'Buyer must pay advance first' });
+
+    // Enforce linear progression (no skipping)
+    const currentIdx = STATUS_ORDER.indexOf(order.status);
+    const targetIdx  = STATUS_ORDER.indexOf(status);
+    if (targetIdx !== currentIdx + 1)
+      return res.status(400).json({ message: `Cannot move from ${order.status} to ${status}. Next step: ${STATUS_ORDER[currentIdx + 1]}` });
+
+    order.status = status;
+    await order.save();
+
+    // Real-time update to both parties
+    _emitOrderUpdate(order);
+
+    await createNotification({ userId: order.buyerId, title: 'Order Update 📦', message: `Your order for ${order.cropName} is now: ${status.replace(/_/g, ' ')}`, type: 'order', relatedId: order._id });
+    res.json(order);
+  } catch (err) {
+    console.error('updateOrderStatus:', err.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+module.exports = { setIo, getIo, getUserOrders, getOrderById, getOrderByBargainId, submitAddress, createOrderFromBargainRoute, recordPayment, updateOrderStatus, _emitOrderUpdate };
