@@ -12,6 +12,7 @@ const orderRoutes         = require('./routes/orderRoutes');
 const ratingRoutes        = require('./routes/ratingRoutes');
 const notificationRoutes  = require('./routes/notificationRoutes');
 const paymentRoutes       = require('./routes/paymentRoutes');
+const adminRoutes         = require('./routes/adminRoutes');
 const socketHandler       = require('./socket');
 
 connectDB();
@@ -40,6 +41,7 @@ app.use('/api/orders',        orderRoutes);
 app.use('/api/ratings',       ratingRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/payment',       paymentRoutes);
+app.use('/api/admin',         adminRoutes);
 
 app.get('/', (_req, res) => res.send('🌾 Kissan Konnect API is running...'));
 

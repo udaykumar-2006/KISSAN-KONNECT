@@ -128,17 +128,34 @@ const _createOrderFromBargain = async (bargain) => {
   try {
     const existing = await Order.findOne({ bargainId: bargain._id });
     if (existing) return existing;
+
+    const [buyer, farmer] = await Promise.all([
+      User.findById(bargain.buyerId).select('phone'),
+      User.findById(bargain.farmerId).select('phone')
+    ]);
+
     const totalPrice = bargain.finalPrice * bargain.finalQuantity;
     const advanceAmount = Math.round(totalPrice * 0.15);
     const order = await Order.create({
       bargainId: bargain._id, cropId: bargain.cropId, cropName: bargain.cropName, cropImage: bargain.cropImage,
-      buyerId: bargain.buyerId, buyerName: bargain.buyerName, farmerId: bargain.farmerId, farmerName: bargain.farmerName,
+      buyerId: bargain.buyerId, buyerName: bargain.buyerName, buyerPhone: buyer?.phone || '',
+      farmerId: bargain.farmerId, farmerName: bargain.farmerName, farmerPhone: farmer?.phone || '',
       pricePerKg: bargain.finalPrice, quantityKg: bargain.finalQuantity, totalPrice,
       advanceAmount, remainingAmount: totalPrice - advanceAmount,
       advancePaid: false, paymentStatus: 'PENDING', status: 'PENDING_ADDRESS', address: '',
     });
     bargain.orderId = order._id; await bargain.save();
-    if (_io) _io.to(bargain._id.toString()).emit('order_created', { orderId: order._id, totalPrice, advanceAmount, remainingAmount: totalPrice - advanceAmount, status: 'PENDING_ADDRESS' });
+    if (_io) _io.to(bargain._id.toString()).emit('order_created', { 
+      orderId: order._id, 
+      totalPrice, 
+      advanceAmount, 
+      remainingAmount: totalPrice - advanceAmount, 
+      status: 'PENDING_ADDRESS',
+      buyerPhone: buyer?.phone || '',
+      farmerPhone: farmer?.phone || '',
+      buyerName: bargain.buyerName,
+      farmerName: bargain.farmerName
+    });
     return order;
   } catch (err) { console.error('_createOrderFromBargain:', err.message); return null; }
 };

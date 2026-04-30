@@ -80,3 +80,10 @@ export const getNotifications     = ()    => API.get('/notifications');
 export const getUnreadCount       = ()    => API.get('/notifications/unread-count');
 export const markNotificationRead = (id)  => API.patch(`/notifications/${id}/read`);
 export const markAllRead          = ()    => API.patch('/notifications/read-all');
+
+// ── Admin ─────────────────────────────────────────────────
+export const getAdminStats    = () => API.get('/admin/stats');
+export const getAdminUsers    = (role) => API.get('/admin/users', { params: { role } });
+export const getAdminOrders   = () => API.get('/admin/orders');
+export const getAdminRevenue  = () => API.get('/admin/revenue');
+export const getAdminBargains = () => API.get('/admin/bargains');

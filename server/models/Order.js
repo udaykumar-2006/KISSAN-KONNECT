@@ -39,6 +39,8 @@ const orderSchema = new mongoose.Schema({
   status:         { type: String, enum: orderStatusEnum, default: 'PENDING_ADDRESS' },
   address:        { type: String, default: '' },   // set when buyer submits address
   paymentMethod:  { type: String, enum: ['cash', 'online'], default: 'online' },
+  buyerPhone:     { type: String },
+  farmerPhone:    { type: String },
   deliveredAt:    { type: Date },
   razorpayOrderId:   { type: String },
   razorpayPaymentId: { type: String },

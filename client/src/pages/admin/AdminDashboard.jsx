@@ -1,22 +1,45 @@
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Users, Sprout, Package, IndianRupee, ArrowUpRight, MessageSquare } from "lucide-react";
-import { useAppStore } from "@/stores/AppStore";
-import { useAuth } from "@/contexts/AuthContext";
+import { Users, Sprout, Package, IndianRupee, ArrowUpRight, Loader2 } from "lucide-react";
+import * as api from "@/services/api";
+import toast from "react-hot-toast";
 
 const AdminDashboard = () => {
-  const { orders, crops, bargains } = useAppStore();
-  const { allUsers } = useAuth();
+  const [stats, setStats] = useState(null);
+  const [orders, setOrders] = useState([]);
+  const [bargains, setBargains] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const totalFarmers = allUsers.filter(u => u.role === "farmer").length;
-  const totalBuyers = allUsers.filter(u => u.role === "buyer").length;
-  const totalRevenue = orders.reduce((sum, o) => sum + o.totalPrice, 0);
-  const activeBargains = bargains.filter(b => b.status === "active").length;
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [statsRes, ordersRes, bargainsRes] = await Promise.all([
+          api.getAdminStats(),
+          api.getAdminOrders(),
+          api.getAdminBargains()
+        ]);
+        setStats(statsRes.data);
+        setOrders(ordersRes.data);
+        setBargains(bargainsRes.data);
+      } catch (error) {
+        toast.error("Failed to fetch admin data");
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
 
-  const stats = [
-    { label: "Total Farmers", value: String(totalFarmers), icon: Sprout, change: "+12%" },
-    { label: "Total Buyers", value: String(totalBuyers), icon: Users, change: "+8%" },
-    { label: "Total Orders", value: String(orders.length), icon: Package, change: "+24%" },
-    { label: "Revenue", value: `₹${totalRevenue.toLocaleString()}`, icon: IndianRupee, change: "+18%" },
+  if (loading || !stats) {
+    return <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+  }
+
+  const statCards = [
+    { label: "Total Farmers", value: String(stats.totalFarmers), icon: Sprout, change: "Active" },
+    { label: "Total Buyers", value: String(stats.totalBuyers), icon: Users, change: "Active" },
+    { label: "Total Orders", value: String(stats.totalOrders), icon: Package, change: "All Time" },
+    { label: "Revenue", value: `₹${stats.totalRevenue.toLocaleString()}`, icon: IndianRupee, change: "Gross" },
   ];
 
   return (
@@ -27,7 +50,7 @@ const AdminDashboard = () => {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((s, i) => (
+        {statCards.map((s, i) => (
           <motion.div key={s.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
             className="rounded-xl border border-border bg-card p-5 shadow-card hover:shadow-elevated transition-shadow">
             <div className="flex items-center justify-between mb-3">
@@ -72,6 +95,7 @@ const AdminDashboard = () => {
                   <td className="p-4"><span className="px-2 py-1 rounded-full text-xs bg-accent text-accent-foreground capitalize">{o.status.replace(/_/g, " ")}</span></td>
                 </tr>
               ))}
+              {orders.length === 0 && <tr><td colSpan="6" className="p-4 text-center text-muted-foreground">No orders yet</td></tr>}
             </tbody>
           </table>
         </div>
@@ -81,7 +105,7 @@ const AdminDashboard = () => {
       <div className="rounded-xl border border-border bg-card shadow-card">
         <div className="p-5 border-b border-border flex items-center justify-between">
           <h2 className="font-display font-bold text-card-foreground">Active Bargains</h2>
-          <span className="text-xs bg-warning/20 text-warning px-2 py-1 rounded-full font-medium">{activeBargains} active</span>
+          <span className="text-xs bg-warning/20 text-warning px-2 py-1 rounded-full font-medium">{stats.activeBargains} active</span>
         </div>
         <div className="p-5 space-y-3">
           {bargains.filter(b => b.status === "active").map(b => (
@@ -93,10 +117,10 @@ const AdminDashboard = () => {
                   <p className="text-xs text-muted-foreground">{b.buyerName} ↔ {b.farmerName}</p>
                 </div>
               </div>
-              <span className="px-2 py-1 rounded-full text-xs bg-warning/20 text-warning font-medium">{b.messages.length} messages</span>
+              <span className="px-2 py-1 rounded-full text-xs bg-warning/20 text-warning font-medium">{b.messages?.length || 0} messages</span>
             </div>
           ))}
-          {activeBargains === 0 && <p className="text-center text-muted-foreground text-sm py-4">No active bargains</p>}
+          {stats.activeBargains === 0 && <p className="text-center text-muted-foreground text-sm py-4">No active bargains</p>}
         </div>
       </div>
     </div>

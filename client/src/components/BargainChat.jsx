@@ -7,7 +7,26 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useNavigate } from 'react-router-dom';
-import { Check, X, RotateCcw, Send, MessageSquare, Loader2, AlertTriangle, Package, Clock, MapPin, CreditCard, Star, ShieldCheck } from 'lucide-react';
+import { 
+  Send, 
+  Check, 
+  X, 
+  Clock, 
+  MapPin, 
+  CreditCard, 
+  Package, 
+  ChevronLeft, 
+  Loader2, 
+  ShieldCheck, 
+  Star,
+  Info,
+  MoreVertical,
+  MessageSquare,
+  ShoppingBag,
+  User as UserIcon,
+  Phone,
+  AlertTriangle
+} from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -133,11 +152,18 @@ const BargainChat = ({ bargain: initialBargain, userRole, onAccepted }) => {
     };
 
     const onOrderCreated = (data) => {
-      if (data.orderId) {
-          setOrderId(data.orderId);
-          setOrderData({ totalPrice: data.totalPrice, advanceAmount: data.advanceAmount, remainingAmount: data.remainingAmount });
-          setOrderStatus(data.status || 'PENDING_ADDRESS');
-      }
+      setOrderId(data.orderId);
+      setOrderStatus(data.status);
+      setOrderData({ 
+        totalPrice: data.totalPrice, 
+        advanceAmount: data.advanceAmount, 
+        remainingAmount: data.remainingAmount,
+        buyerPhone: data.buyerPhone,
+        farmerPhone: data.farmerPhone,
+        buyerName: data.buyerName,
+        farmerName: data.farmerName
+      });
+      toast.success('Order Record Created! 📦');
     };
 
     const onRejected = (data) => {
@@ -348,6 +374,22 @@ const BargainChat = ({ bargain: initialBargain, userRole, onAccepted }) => {
                 <div className="flex justify-between text-xs text-muted-foreground font-medium"><span>Total Amount:</span><span className="font-bold text-card-foreground">₹{orderData.totalPrice?.toLocaleString()}</span></div>
                 <div className="flex justify-between text-xs text-muted-foreground font-medium"><span>Advance (15%):</span><span className="font-bold text-primary">₹{orderData.advanceAmount?.toLocaleString()}</span></div>
                 <div className="flex justify-between text-xs text-muted-foreground font-medium pt-1 border-t border-border/50"><span>Remaining:</span><span className="font-bold text-card-foreground">₹{orderData.remainingAmount?.toLocaleString()}</span></div>
+                
+                {/* Contact Info */}
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-border/30">
+                   <div className="flex items-center gap-2">
+                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                       <UserIcon className="w-4 h-4" />
+                     </div>
+                     <div>
+                       <p className="text-[10px] text-muted-foreground font-bold leading-none uppercase">Contact {userRole === 'buyer' ? 'Farmer' : 'Buyer'}</p>
+                       <p className="text-xs font-bold text-card-foreground">{userRole === 'buyer' ? orderData.farmerName : orderData.buyerName}</p>
+                     </div>
+                   </div>
+                   <a href={`tel:${userRole === 'buyer' ? orderData.farmerPhone : orderData.buyerPhone}`} className="p-2 rounded-xl bg-primary text-white shadow-sm hover:scale-105 transition-transform">
+                     <Phone className="w-4 h-4" />
+                   </a>
+                </div>
               </div>
             )}
             
@@ -433,7 +475,9 @@ const BargainChat = ({ bargain: initialBargain, userRole, onAccepted }) => {
               Waiting for {waitingFor}'s response…
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
+
+              <div className="space-y-3">
               {userRole === 'farmer' && (
                 <div className="grid grid-cols-2 gap-3">
                   <Button onClick={handleAccept} size="lg" disabled={sending} className="bg-green-600 hover:bg-green-700 text-white rounded-xl shadow-sm h-12 font-bold">
@@ -468,9 +512,10 @@ const BargainChat = ({ bargain: initialBargain, userRole, onAccepted }) => {
               </div>
               {qtyError && <p className="text-[10px] text-destructive font-bold flex items-center gap-1.5 mt-1 animate-pulse"><AlertTriangle className="w-3.5 h-3.5" />{qtyError}</p>}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
+    )}
 
       {/* Address Modal */}
       {userRole === 'buyer' && (

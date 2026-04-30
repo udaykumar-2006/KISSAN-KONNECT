@@ -125,11 +125,17 @@ const createOrderFromBargainRoute = async (req, res) => {
     const existing = await Order.findOne({ bargainId: bargain._id });
     if (existing) return res.json(existing);
 
+    const [buyer, farmer] = await Promise.all([
+      User.findById(bargain.buyerId).select('phone'),
+      User.findById(bargain.farmerId).select('phone')
+    ]);
+
     const totalPrice    = bargain.finalPrice * bargain.finalQuantity;
     const advanceAmount = Math.round(totalPrice * 0.15);
     const order = await Order.create({
       bargainId: bargain._id, cropId: bargain.cropId, cropName: bargain.cropName, cropImage: bargain.cropImage,
-      buyerId: bargain.buyerId, buyerName: bargain.buyerName, farmerId: bargain.farmerId, farmerName: bargain.farmerName,
+      buyerId: bargain.buyerId, buyerName: bargain.buyerName, buyerPhone: buyer?.phone || '',
+      farmerId: bargain.farmerId, farmerName: bargain.farmerName, farmerPhone: farmer?.phone || '',
       pricePerKg: bargain.finalPrice, quantityKg: bargain.finalQuantity, totalPrice,
       advanceAmount, remainingAmount: totalPrice - advanceAmount,
       advancePaid: false, paymentStatus: 'PENDING', status: 'PENDING_ADDRESS', address: '',

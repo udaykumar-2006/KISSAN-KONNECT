@@ -6,7 +6,7 @@ import { Sprout, Eye, EyeOff, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import  toast  from "react-hot-toast";
+import toast from "react-hot-toast";
 import heroImg from "@/assets/hero-farm.jpg";
 
 const LoginPage = () => {
@@ -80,11 +80,10 @@ const LoginPage = () => {
                     type="button"
                     key={r}
                     onClick={() => setLoginRole(r)}
-                    className={`flex-1 py-2.5 rounded-lg border text-sm font-medium capitalize transition-all ${
-                      loginRole === r
+                    className={`flex-1 py-2.5 rounded-lg border text-sm font-medium capitalize transition-all ${loginRole === r
                         ? "gradient-hero text-primary-foreground border-transparent"
                         : "border-border text-muted-foreground hover:border-primary hover:text-foreground bg-card"
-                    }`}
+                      }`}
                   >
                     {r}
                   </button>
@@ -112,7 +111,7 @@ const LoginPage = () => {
               {([
                 { label: "🌾 Farmer", email: "rajesh@farm.com", pw: "farmer123", r: "farmer" },
                 { label: "🛒 Buyer", email: "priya@buy.com", pw: "buyer123", r: "buyer" },
-                { label: "⚙️ Admin", email: "admin@kissankonnect.com", pw: "admin@123", r: "admin"  },
+                { label: "⚙️ Admin", email: "admin@email.com", pw: "admin123", r: "admin" },
               ]).map(demo => (
                 <Button
                   key={demo.r}

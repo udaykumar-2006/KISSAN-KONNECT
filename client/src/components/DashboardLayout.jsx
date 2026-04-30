@@ -31,7 +31,6 @@ const adminLinks = [
   { title: "Buyers", url: "/admin/buyers", icon: Users },
   { title: "Orders", url: "/admin/orders", icon: Package },
   { title: "Revenue", url: "/admin/revenue", icon: BarChart3 },
-  { title: "Profile", url: "/admin/profile", icon: Settings },
 ];
 
 const DashboardLayout = ({ children }) => {

@@ -1,11 +1,30 @@
-import { useAuth } from "@/contexts/AuthContext";
-import { useAppStore } from "@/stores/AppStore";
-import { Users } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Users, Loader2 } from "lucide-react";
+import * as api from "@/services/api";
+import toast from "react-hot-toast";
 
 const AdminBuyers = () => {
-  const { allUsers } = useAuth();
-  const { orders } = useAppStore();
-  const buyers = allUsers.filter(u => u.role === "buyer");
+  const [buyers, setBuyers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchBuyers = async () => {
+      try {
+        const res = await api.getAdminUsers("buyer");
+        setBuyers(res.data);
+      } catch (error) {
+        toast.error("Failed to fetch buyers");
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchBuyers();
+  }, []);
+
+  if (loading) {
+    return <div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -23,19 +42,16 @@ const AdminBuyers = () => {
             <th className="text-left p-4 font-medium">Total Spent</th>
           </tr></thead>
           <tbody>
-            {buyers.map(b => {
-              const buyerOrders = orders.filter(o => o.buyerId === b.id);
-              const spent = buyerOrders.reduce((s, o) => s + o.totalPrice, 0);
-              return (
-                <tr key={b.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                  <td className="p-4 font-semibold text-card-foreground flex items-center gap-2"><Users className="w-4 h-4 text-secondary" />{b.name}</td>
-                  <td className="p-4 text-muted-foreground">{b.email}</td>
-                  <td className="p-4 text-muted-foreground">{b.address.city}, {b.address.state}</td>
-                  <td className="p-4 text-card-foreground">{buyerOrders.length}</td>
-                  <td className="p-4 font-semibold text-primary">₹{spent.toLocaleString()}</td>
-                </tr>
-              );
-            })}
+            {buyers.map(b => (
+              <tr key={b.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+                <td className="p-4 font-semibold text-card-foreground flex items-center gap-2"><Users className="w-4 h-4 text-secondary" />{b.name}</td>
+                <td className="p-4 text-muted-foreground">{b.email}</td>
+                <td className="p-4 text-muted-foreground">{b.address?.city || 'N/A'}, {b.address?.state || ''}</td>
+                <td className="p-4 text-card-foreground">{b.orderCount || 0}</td>
+                <td className="p-4 font-semibold text-primary">₹{(b.revenue || 0).toLocaleString()}</td>
+              </tr>
+            ))}
+            {buyers.length === 0 && <tr><td colSpan="5" className="p-4 text-center text-muted-foreground">No buyers found</td></tr>}
           </tbody>
         </table>
       </div>

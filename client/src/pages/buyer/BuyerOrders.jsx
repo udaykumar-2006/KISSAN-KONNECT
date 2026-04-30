@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Loader2, RefreshCw, ShoppingBag, MapPin, Star } from 'lucide-react';
+import { Loader2, RefreshCw, ShoppingBag, MapPin, Star, Phone, CheckCircle2, CreditCard, MessageSquare, Search, ChevronDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 import * as api from '@/services/api';
 import { getSocket } from '@/services/socket';
@@ -191,119 +191,203 @@ const BuyerOrders = () => {
   const activeOrders    = orders.filter(o => !['COMPLETED'].includes(o.status));
   const completedOrders = orders.filter(o =>  ['COMPLETED'].includes(o.status));
 
-  const renderOrder = (order) => (
-    <div key={order._id} className="rounded-xl border border-border bg-card shadow-card p-5 hover:shadow-elevated transition-shadow">
-      <div className="flex flex-col md:flex-row gap-4">
-        <img src={order.cropImage} alt={order.cropName} className="w-20 h-20 rounded-lg object-cover shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between mb-2 gap-2">
-            <div>
-              <h3 className="font-display font-bold text-card-foreground">{order.cropName}</h3>
-              <p className="text-xs text-muted-foreground">Farmer: {order.farmerName} · #{order._id.slice(-8).toUpperCase()}</p>
+  const [searchQuery, setSearchQuery] = useState('');
+  const [timeFilter,   setTimeFilter]   = useState('all');
+
+  const filteredOrders = orders.filter(o => {
+    const matchesSearch = o.cropName.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          o.farmerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          o._id.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesSearch;
+  });
+
+  const renderOrder = (order) => {
+    const orderDate = new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+    
+    return (
+      <div key={order._id} className="rounded-xl border border-border/80 bg-background overflow-hidden mb-6 shadow-sm hover:shadow-md transition-shadow">
+        {/* Order Header (Amazon/Flipkart Style) */}
+        <div className="bg-muted/40 px-4 py-3 border-b border-border/80 flex flex-wrap items-center justify-between gap-4 text-[13px]">
+          <div className="flex gap-8">
+            <div className="space-y-0.5">
+              <p className="text-muted-foreground uppercase text-[10px] font-bold tracking-wider">Order Placed</p>
+              <p className="font-medium text-foreground">{orderDate}</p>
             </div>
-            <Badge variant="outline" className={`text-[10px] shrink-0 ${statusColor[order.status]||''}`}>
-              {orderStatusLabels[order.status]||order.status}
-            </Badge>
+            <div className="space-y-0.5">
+              <p className="text-muted-foreground uppercase text-[10px] font-bold tracking-wider">Total</p>
+              <p className="font-medium text-foreground">₹{order.totalPrice.toLocaleString()}</p>
+            </div>
+            <div className="space-y-0.5">
+              <p className="text-muted-foreground uppercase text-[10px] font-bold tracking-wider">Ship To</p>
+              <p className="font-medium text-primary hover:underline cursor-pointer">{order.buyerName}</p>
+            </div>
           </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-4">
-            <div><p className="text-xs text-muted-foreground">Qty</p><p className="font-semibold">{order.quantityKg} kg</p></div>
-            <div><p className="text-xs text-muted-foreground">Total</p><p className="font-semibold">₹{order.totalPrice.toLocaleString()}</p></div>
-            <div><p className="text-xs text-muted-foreground">Advance</p><p className={`font-semibold ${order.advancePaid?'text-green-600':'text-amber-500'}`}>{order.advancePaid?`₹${order.advanceAmount?.toLocaleString()} ✓`:'Pending'}</p></div>
-            <div><p className="text-xs text-muted-foreground">Remaining</p><p className={`font-semibold ${order.remainingAmount>0?'text-amber-500':'text-green-600'}`}>{order.remainingAmount>0?`₹${order.remainingAmount.toLocaleString()}`:'Paid ✓'}</p></div>
+          <div className="flex flex-col items-end space-y-0.5">
+            <p className="text-muted-foreground uppercase text-[10px] font-bold tracking-wider">Order # {order._id.slice(-12).toUpperCase()}</p>
+            <div className="flex gap-2 text-primary font-medium">
+              <button className="hover:underline" onClick={() => { navigator.clipboard.writeText(order._id); toast.success('ID copied'); }}>Copy ID</button>
+            </div>
           </div>
+        </div>
 
-          <OrderTracker currentStatus={order.status} />
-
-          {/* PENDING_ADDRESS — submit address */}
-          {order.status === 'PENDING_ADDRESS' && (
-            <div className="mt-4">
-              <div className="p-4 rounded-xl bg-primary/5 border border-primary/20 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                    <MapPin className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-card-foreground">Delivery Address Required</p>
-                    <p className="text-xs text-muted-foreground">Please provide your address to see shipping costs and proceed.</p>
-                  </div>
+        {/* Order Body */}
+        <div className="p-4 sm:p-6">
+          <div className="flex flex-col md:flex-row gap-6">
+            {/* Left: Image & Title */}
+            <div className="flex gap-4 min-w-[300px]">
+              <img src={order.cropImage} alt={order.cropName} className="w-24 h-24 rounded-lg object-cover border border-border/50 shadow-sm" />
+              <div className="space-y-1">
+                <h3 className="text-lg font-bold text-foreground leading-tight hover:text-primary cursor-pointer transition-colors">{order.cropName}</h3>
+                <p className="text-sm text-muted-foreground">Seller: <span className="text-primary font-medium">{order.farmerName}</span></p>
+                <p className="text-xs text-muted-foreground font-medium">Quantity: {order.quantityKg} kg @ ₹{order.pricePerKg}/kg</p>
+                <div className="flex items-center gap-3 mt-2">
+                  <a href={`tel:${order.farmerPhone}`} className="text-xs bg-primary/10 text-primary px-3 py-1.5 rounded-full font-bold flex items-center gap-1.5 hover:bg-primary/20 transition-colors">
+                    <Phone className="w-3 h-3" /> Contact Seller
+                  </a>
                 </div>
-                <Button size="sm" className="gradient-hero text-primary-foreground shadow-lg shadow-primary/20 shrink-0" onClick={() => { setAddrOrder(order); setAddrForm({ street:'', landmark:'', city:'', state:'', pincode:'' }); }}>
-                  Submit Address
-                </Button>
               </div>
             </div>
-          )}
 
-          {/* AWAITING_ADVANCE_PAYMENT — pay advance */}
-          {order.status === 'AWAITING_ADVANCE_PAYMENT' && (
-            <div className="mt-3">
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-sm text-amber-700 mb-2">
-                💳 Pay ₹{order.advanceAmount?.toLocaleString()} advance (15%) to confirm this order.
-              </div>
-              <Button size="sm" className="gradient-golden text-secondary-foreground border-0" onClick={() => handlePayAdvance(order)} disabled={paying===order._id}>
-                {paying===order._id?<><Loader2 className="w-3 h-3 animate-spin mr-1"/>Processing…</>:`Pay ₹${order.advanceAmount?.toLocaleString()} Advance`}
-              </Button>
-            </div>
-          )}
-
-          {/* OUT_FOR_DELIVERY — pay remaining 85% */}
-          {order.status === 'OUT_FOR_DELIVERY' && order.remainingAmount > 0 && (
-            <div className="mt-3">
-              <Button size="sm" className="gradient-golden text-secondary-foreground border-0" onClick={() => handlePayRemaining(order)} disabled={paying===order._id}>
-                {paying===order._id?<><Loader2 className="w-3 h-3 animate-spin mr-1"/>Processing…</>:`Pay Remaining ₹${order.remainingAmount.toLocaleString()} (85%)`}
-              </Button>
-            </div>
-          )}
-
-          {/* Rate order after completion */}
-          {order.status === 'COMPLETED' && (
-            <div className="mt-4 flex items-center justify-between p-3 rounded-xl bg-muted/40 border border-border/50">
+            {/* Center: Status & Progress */}
+            <div className="flex-1 space-y-3">
               <div className="flex items-center gap-2">
-                <Star className={`w-4 h-4 ${(order.isRatedByBuyer || ratedOrders.has(order._id)) ? 'text-secondary fill-secondary' : 'text-muted-foreground'}`} />
-                <span className="text-xs font-medium">{(order.isRatedByBuyer || ratedOrders.has(order._id)) ? 'Rating submitted!' : 'How was your experience?'}</span>
+                <div className={`w-2 h-2 rounded-full ${order.status==='COMPLETED' ? 'bg-green-500' : 'bg-blue-500 animate-pulse'}`} />
+                <p className="text-base font-bold text-foreground">
+                  {order.status === 'COMPLETED' ? `Delivered on ${new Date(order.updatedAt).toLocaleDateString()}` : orderStatusLabels[order.status]}
+                </p>
               </div>
-              {!(order.isRatedByBuyer || ratedOrders.has(order._id)) && (
-                <Button size="sm" variant="outline" className="h-8 text-xs px-3 bg-background hover:bg-muted" onClick={() => setRateOrder(order)}>
-                  Rate Order
-                </Button>
+              
+              <OrderTracker currentStatus={order.status} />
+
+              {/* Status Specific Messages */}
+              {order.status === 'PENDING_ADDRESS' && (
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800">
+                  <MapPin className="w-5 h-5 shrink-0" />
+                  <p className="text-xs font-medium">Action Required: Please provide your delivery address to start the fulfillment process.</p>
+                </div>
+              )}
+              {order.status === 'AWAITING_ADVANCE_PAYMENT' && (
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-800">
+                  <CreditCard className="w-5 h-5 shrink-0" />
+                  <p className="text-xs font-medium">Payment Required: Pay ₹{order.advanceAmount?.toLocaleString()} advance (15%) to confirm with the farmer.</p>
+                </div>
               )}
             </div>
-          )}
 
-          {order.address && <p className="text-xs text-muted-foreground mt-2">📍 {order.address}</p>}
+            {/* Right: Actions */}
+            <div className="flex flex-col gap-2 min-w-[200px]">
+              {order.status === 'PENDING_ADDRESS' && (
+                <Button size="sm" className="w-full gradient-hero text-primary-foreground font-bold rounded-lg shadow-sm" onClick={() => { setAddrOrder(order); setAddrForm({ street:'', landmark:'', city:'', state:'', pincode:'' }); }}>
+                  Submit Address
+                </Button>
+              )}
+              {order.status === 'AWAITING_ADVANCE_PAYMENT' && (
+                <Button size="sm" className="w-full bg-[#FFD814] hover:bg-[#F7CA00] text-black border border-[#F2C200] font-medium rounded-lg shadow-sm" onClick={() => handlePayAdvance(order)} disabled={paying===order._id}>
+                  {paying===order._id ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : 'Pay Advance (15%)'}
+                </Button>
+              )}
+              {order.status === 'OUT_FOR_DELIVERY' && order.remainingAmount > 0 && (
+                <Button size="sm" className="w-full bg-[#FFD814] hover:bg-[#F7CA00] text-black border border-[#F2C200] font-medium rounded-lg shadow-sm" onClick={() => handlePayRemaining(order)} disabled={paying===order._id}>
+                  {paying===order._id ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : 'Pay Remaining (85%)'}
+                </Button>
+              )}
+              
+              {order.status === 'COMPLETED' && (
+                <>
+                  {!(order.isRatedByBuyer || ratedOrders.has(order._id)) ? (
+                    <Button size="sm" variant="outline" className="w-full rounded-lg text-xs font-medium border-primary/30 text-primary hover:bg-primary/5" onClick={() => setRateOrder(order)}>Write a product review</Button>
+                  ) : (
+                    <p className="text-[10px] text-center text-green-600 font-bold mt-1 flex items-center justify-center gap-1"><CheckCircle2 className="w-3 h-3"/> Review submitted</p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+          
+          {order.address && (
+            <div className="mt-4 pt-4 border-t border-border/50 flex items-start gap-2 text-muted-foreground">
+              <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <p className="text-xs leading-relaxed">Delivery Address: <span className="text-foreground font-medium">{order.address}</span></p>
+            </div>
+          )}
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   if (loading) return <div className="flex items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin text-primary mr-3" /><span className="text-muted-foreground">Loading orders…</span></div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-display font-bold">My Orders</h1><p className="text-muted-foreground text-sm">Track your purchases</p></div>
-        <Button variant="outline" size="sm" onClick={loadOrders}><RefreshCw className="w-4 h-4 mr-1" />Refresh</Button>
+    <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Your Orders</h1>
+          <p className="text-muted-foreground mt-1">Manage your purchases and track shipments.</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={loadOrders} className="w-fit">
+          <RefreshCw className="w-4 h-4 mr-2" /> Refresh Orders
+        </Button>
+      </div>
+
+      {/* Amazon Style Filter Bar */}
+      <div className="flex flex-col sm:flex-row gap-4 items-center">
+        <div className="relative flex-1 w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input 
+            placeholder="Search all orders" 
+            className="pl-10 h-10 rounded-lg bg-muted/20 border-border focus:ring-primary"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-sm font-medium text-muted-foreground">Period:</span>
+          <select 
+            className="h-10 px-3 rounded-lg bg-muted/20 border border-border text-sm font-medium focus:ring-primary focus:outline-none"
+            value={timeFilter}
+            onChange={e => setTimeFilter(e.target.value)}
+          >
+            <option value="all">Last 3 months</option>
+            <option value="2026">2026</option>
+            <option value="2025">2025</option>
+          </select>
+        </div>
       </div>
 
       {orders.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
-          <ShoppingBag className="w-12 h-12 opacity-30" />
-          <p className="text-sm">No orders yet. Complete a bargain to create one.</p>
+        <div className="flex flex-col items-center justify-center py-24 text-muted-foreground gap-4 border-2 border-dashed border-border rounded-3xl">
+          <div className="w-20 h-20 rounded-full bg-muted/30 flex items-center justify-center">
+            <ShoppingBag className="w-10 h-10 opacity-20" />
+          </div>
+          <div className="text-center">
+            <p className="text-lg font-bold text-foreground">No orders yet</p>
+            <p className="text-sm max-w-xs mx-auto">Start exploring crops and complete a deal to see your orders here.</p>
+          </div>
+          <Button variant="link" className="text-primary font-bold">Start Shopping</Button>
         </div>
       ) : (
-        <Tabs defaultValue="active">
-          <TabsList>
-            <TabsTrigger value="active">Active ({activeOrders.length})</TabsTrigger>
-            <TabsTrigger value="completed">Completed ({completedOrders.length})</TabsTrigger>
+        <Tabs defaultValue="active" className="w-full">
+          <TabsList className="bg-transparent border-b border-border w-full justify-start rounded-none h-auto p-0 gap-8">
+            <TabsTrigger value="active" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-2 py-3 text-sm font-bold transition-none">
+              Orders ({filteredOrders.filter(o => !['COMPLETED'].includes(o.status)).length})
+            </TabsTrigger>
+            <TabsTrigger value="completed" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-2 py-3 text-sm font-bold transition-none">
+              Completed ({filteredOrders.filter(o => ['COMPLETED'].includes(o.status)).length})
+            </TabsTrigger>
           </TabsList>
-          <TabsContent value="active" className="space-y-4 mt-4">
-            {activeOrders.map(renderOrder)}
-            {activeOrders.length===0 && <p className="text-center text-muted-foreground py-12">No active orders</p>}
+          
+          <TabsContent value="active" className="mt-6 space-y-6">
+            {filteredOrders.filter(o => !['COMPLETED'].includes(o.status)).map(renderOrder)}
+            {filteredOrders.filter(o => !['COMPLETED'].includes(o.status)).length === 0 && (
+              <p className="text-center text-muted-foreground py-20 italic">No matching orders found.</p>
+            )}
           </TabsContent>
-          <TabsContent value="completed" className="space-y-4 mt-4">
-            {completedOrders.map(renderOrder)}
-            {completedOrders.length===0 && <p className="text-center text-muted-foreground py-12">No completed orders</p>}
+          
+          <TabsContent value="completed" className="mt-6 space-y-6">
+            {filteredOrders.filter(o => ['COMPLETED'].includes(o.status)).map(renderOrder)}
+            {filteredOrders.filter(o => ['COMPLETED'].includes(o.status)).length === 0 && (
+              <p className="text-center text-muted-foreground py-20 italic">No matching completed orders.</p>
+            )}
           </TabsContent>
         </Tabs>
       )}
